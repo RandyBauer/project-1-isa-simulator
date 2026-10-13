@@ -57,17 +57,16 @@ RUNS = [
     ('testAll', 'testAll', '# testAll', TEST_ALL_WORDS, None),
     ('maxFinderInt', 'maxFinderInt', '# maxFinderInt',
      array_words(INT_DATA, i32), i32(max(INT_DATA))),
-    ('maxFinderInt', 'maxFinderIntNeg',
-     '# maxFinderInt - second data set: all negative, largest value is the last element',
+    ('maxFinderInt', 'maxFinderIntNeg', '# maxFinderInt, data set 2',
      array_words(INT_NEG_DATA, i32), i32(max(INT_NEG_DATA))),
     ('maxFinderFP', 'maxFinderFP', '# maxFinderFP',
      array_words(FP_DATA, float_bits), float_bits(max(FP_DATA))),
-    ('maxFinderFP', 'maxFinderFPNeg',
-     '# maxFinderFP - second data set: all negative, largest value is the first element',
+    ('maxFinderFP', 'maxFinderFPNeg', '# maxFinderFP, data set 2',
      array_words(FP_NEG_DATA, float_bits), float_bits(max(FP_NEG_DATA))),
 ]
 
-EXPECT = re.compile(r'=>\s*0x([0-9A-Fa-f]{8})')
+# A store's comment "M[0x104] = 0xFFFFFFF2" gives its address and expected value.
+EXPECT = re.compile(r'M\[0x([0-9A-Fa-f]+)\] = 0x([0-9A-Fa-f]{8})')
 
 
 def check(cond, msg):
@@ -113,15 +112,18 @@ def main():
         expected = isaref.mem_text(header_in, res.mem)
         write(OUT / f'{mem_name}.mem.expected', expected)
 
-        # Every store marked "=> 0x..." must have left that value behind.
+        # Every store marked "M[addr] = value" wrote that address and left that value.
         for ins in prog:
             m = EXPECT.search(ins.comment)
-            if m:
+            if m and ins.name in ('SW', 'FSW'):
                 check(ins.addr in res.last_store,
                       f'{prog_name} line {ins.line}: store never executed')
-                got = load_word(res.mem, res.last_store[ins.addr])
-                check(got == int(m.group(1), 16),
-                      f'{prog_name} line {ins.line}: got 0x{got:08X}, comment says 0x{m.group(1)}')
+                addr = res.last_store[ins.addr]
+                check(addr == int(m.group(1), 16),
+                      f'{prog_name} line {ins.line}: stored at 0x{addr:X}, comment says 0x{m.group(1)}')
+                got = load_word(res.mem, addr)
+                check(got == int(m.group(2), 16),
+                      f'{prog_name} line {ins.line}: got 0x{got:08X}, comment says 0x{m.group(2)}')
         if want_max is not None:
             got = load_word(res.mem, MAX_ADDR)
             check(got == want_max, f'{mem_name}: MAX is 0x{got:08X}, expected 0x{want_max:08X}')
@@ -131,7 +133,7 @@ def main():
             missing = [n for n in isaref.ISA if not res.counts[n]]
             check(not missing, f'testAll never executes {missing}')
             check(all(0x100 <= a < 0x200 for a in changed), 'testAll wrote outside 0x100-0x1FF')
-            marked = sum(1 for i in prog if EXPECT.search(i.comment))
+            marked = sum(1 for i in prog if i.name in ('SW', 'FSW') and EXPECT.search(i.comment))
             check(len(changed) == marked, f'testAll changed {len(changed)} words, {marked} are marked')
         else:
             check(changed <= {MAX_ADDR}, f'{mem_name} wrote somewhere other than MAX')

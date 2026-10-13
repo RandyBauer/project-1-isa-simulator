@@ -216,7 +216,7 @@ def resolve_labels(src_text):
             out.append(row[1])
         elif row[0] == 'label':
             _, name, comment = row
-            out.append(f'# {name}:  (address {labels[name]})  {comment}'.rstrip())
+            out.append(f'# {name} = address {labels[name]}  {comment}'.rstrip())
         else:
             _, a, name, ops, comment = row
             notes = []
@@ -229,18 +229,18 @@ def resolve_labels(src_text):
                     ops[i] = str(target - (a + 1)) if is_offset else str(target)
                     notes.append(f'{tok} = address {target}')
             text = f'{name:<6}{", ".join(ops)}'
-            note = f'  [{"; ".join(notes)}]' if notes else ''
-            out.append(f'    {text:<26}# {a:>3}: {comment}{note}'.rstrip())
-    out[1:1] = RESOLVED_NOTE              # right after the title line
+            note = f'[{"; ".join(notes)}]' if notes else ''
+            tail = '  '.join(s for s in (comment, note) if s)
+            out.append(f'    {text:<26}# {a:>3}: {tail}'.rstrip())
+    end = out.index('') if '' in out else 0  # end of the header comment block
+    out[end:end] = RESOLVED_NOTE
     return '\n'.join(out) + '\n'
 
 
 RESOLVED_NOTE = [
     '#',
-    '# Labels have been replaced by numbers. Each comment starts with the',
-    "# instruction's address (\"N:\"), and [LABEL = address N] names the target",
-    '# of a branch or jump. A branch operand is an offset counted from the next',
-    '# instruction; a J or JAL operand is an absolute instruction address.',
+    '# "N:" is the instruction address. Branch operands are offsets from the',
+    '# next instruction. J and JAL operands are instruction addresses.',
 ]
 
 
@@ -310,7 +310,9 @@ def signed(x):
     return x - (1 << 32) if x & 0x80000000 else x
 
 
-def run(prog, mem, max_steps=1_000_000):
+def run(prog, mem, max_steps=1_000_000, on_step=None):
+    """Execute until HALT. If given, on_step(instr, next_pc, R, F, mem) is
+    called after every instruction (next_pc is None for HALT)."""
     R, F = [0] * 16, [0] * 16          # F holds raw 32-bit IEEE-754 patterns
     mem = dict(mem)
     counts, last_store = Counter(), {}
@@ -380,8 +382,12 @@ def run(prog, mem, max_steps=1_000_000):
         elif name == 'FEQ':  R[rd] = int(f32(F[rs]) == f32(F[rt]))
         elif name == 'FMOV': F[rd] = F[rs]
         elif name == 'HALT':
+            if on_step:
+                on_step(prog[pc], None, R, F, mem)
             break
         R[0] = 0                           # writes to R0 are ignored
+        if on_step:
+            on_step(prog[pc], npc, R, F, mem)
         pc = npc
     return Result(mem, counts, steps, last_store, R, F)
 
